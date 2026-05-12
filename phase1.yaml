@@ -1,0 +1,57 @@
+version: "1.0"
+project_title: "Bavaria_Pediatric_Infrastructure_Data_Aggregation"
+system_dependency_verification:
+  required_llm: "qwen3.5:9b"
+  initialization_protocol: |
+    Prior to pipeline execution, the controller node must query the local Ollama instance to verify the presence of the specified model. 
+    If 'qwen3.5:9b' is not detected in the local repository, execute 'ollama pull qwen3.5:9b' to satisfy the dependency. 
+    Execution of subsequent modules is suspended until the model is fully initialized and available for inference.
+
+phase_1_parameters:
+  primary_objective: "Compile a structured, academically rigorous dataset of pediatric healthcare providers in Bavaria."
+  storage_architecture:
+    raw_data_cache: "./data/raw_html"
+    parsed_text_cache: "./data/parsed_markdown"
+    structured_dataset: "./data/processed_registry"
+
+  operational_modules:
+    controller_node:
+      description: "Central orchestrator for task delegation and state management."
+      function: "Verify local dependencies, sequence the retrieval and parsing modules, and log standard system outputs."
+
+    data_retrieval_module:
+      description: "Automated retrieval scripts for querying public medical registries."
+      methods: "Utilize headless browser automation (e.g., Playwright) to navigate dynamically rendered DOM structures."
+      data_sources:
+        - registry: "gesund.bund.de (Federal Health Portal)"
+          query_parameters: "Specialty: Kinder- und Jugendmedizin, Region: Bayern"
+          procedure: "Iterate through standardized query results to catalog individual provider URIs."
+        - registry: "KVB (Kassenärztliche Vereinigung Bayerns)"
+          query_parameters: "Fachgruppe: Kinderärzte"
+          procedure: "Implement programmatic delays (2.0 to 5.0 seconds) between requests to strictly respect server rate limits and adhere to polite crawling standards. Record all relevant profile URIs."
+        - registry: "Supplementary Public Directories"
+          procedure: "Utilize as secondary sources exclusively to resolve null values in the primary dataset."
+
+    html_parsing_utility:
+      description: "Formatting utility for data minimization."
+      function: "Process raw HTML strings. Remove navigational elements, scripts, and stylesheets. Extract the core textual content into standardized Markdown to optimize token density for the NLP engine."
+
+    nlp_extraction_engine:
+      model_specification: "qwen3.5:9b"
+      processing_mode: "Deterministic JSON Schema extraction"
+      extraction_logic: |
+        Analyze the structured Markdown input. Extract relevant entities into the predefined JSON schema.
+        Required variables: title, first_name, last_name, clinic_name, street_address, postal_code, city, email, and profile_url.
+        Null Value Protocol: If an email address is not explicitly documented in the source text, assign a 'null' value. 
+        Under no circumstances should the model synthesize or estimate contact information.
+
+    data_structuring_module:
+      dependencies: ["pandas", "openpyxl"]
+      processing_pipeline:
+        step_1: "Aggregate all individual JSON outputs into a unified Pandas DataFrame."
+        step_2: "Execute deterministic deduplication based on 'email' and 'last_name' arrays."
+        step_3: "Retain observations with null emails if a valid 'profile_url' exists to preserve infrastructural data."
+        step_4: "Standardize string formatting (e.g., Unicode normalization for German Umlauts, uniform street abbreviations)."
+      export_formats:
+        - "bavaria_pediatricians_dataset.csv (UTF-8-SIG)"
+        - "bavaria_pediatricians_reference.xlsx (Standardized tabular format)"

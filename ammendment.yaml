@@ -1,0 +1,95 @@
+version: "1.0"
+amendment_title: "LLM_Usage_Optimization_and_Context_Window_Management"
+
+recommendations:
+  context_window_optimization:
+    description: "Strategies to minimize token usage and avoid context window overflow during NLP extraction."
+
+    chunking_strategy:
+      approach: "Per-provider segmentation"
+      detail: |
+        Rather than feeding entire page Markdown to the LLM, pre-segment the text into individual
+        provider blocks before extraction. Each gesund.bund.de result card follows a predictable
+        pattern (Name → Address → Phone → Details). Split on these boundaries and send one provider
+        per LLM call. This reduces per-call token count from ~2000-4000 to ~200-400 tokens, yielding
+        higher extraction accuracy and lower cost.
+      implementation: |
+        Use regex or heading-based splitting on patterns like:
+          - "### Dr." or "### Prof."
+          - Lines matching postal code pattern (e.g., /\d{5}\s+\w+/)
+        Feed each chunk individually to the model with a minimal system prompt.
+
+    prompt_minimization:
+      approach: "Strip boilerplate from prompts"
+      detail: |
+        The extraction prompt should be as concise as possible. Avoid repeating the full JSON schema
+        description on every call. Instead:
+          1. Use a one-shot example in the system prompt (~150 tokens).
+          2. Pass only the provider text as user content.
+          3. Request JSON output format via Ollama's --format json flag to eliminate
+             parsing overhead and hallucinated prose.
+      token_savings_estimate: "~60% reduction per extraction call"
+
+    batch_processing:
+      approach: "Batch multiple provider chunks into a single LLM call"
+      detail: |
+        For models with larger context windows, batch 5-10 provider chunks separated by
+        a delimiter (e.g., "---NEXT---") and instruct the model to return a JSON array.
+        This amortizes the system prompt cost across multiple extractions.
+      tradeoff: "Slight risk of cross-contamination between records; validate output count matches input count."
+
+  model_selection:
+    current: "qwen3.5:9b"
+    recommendation: |
+      For structured extraction tasks with a rigid schema, smaller quantized models often
+      perform comparably to larger ones. Consider:
+        - qwen3.5:9b (current): Good balance of speed and accuracy for German text.
+        - qwen3:8b: Already cached locally; test extraction quality as a fallback.
+      If extraction accuracy drops, prefer re-prompting with the same model over upgrading
+      to a larger model—prompt engineering typically yields more improvement per dollar.
+
+    temperature_setting:
+      value: 0.0
+      rationale: "Deterministic extraction. Set temperature=0 via Ollama API to eliminate sampling variance."
+      implementation: 'ollama run qwen3.5:9b --format json /set parameter temperature 0'
+
+  preprocessing_to_reduce_llm_load:
+    html_stripping:
+      detail: |
+        The current Markdown conversion retains navigation, cookie banners, and footer text.
+        Add domain-specific stripping rules:
+          - Remove everything before the first "### Dr." or "### Prof." heading.
+          - Remove everything after "Feedback-Formular" or "Hilfreiche Links".
+          - Strip map/route links and distance indicators (not needed for extraction).
+        This can reduce input tokens by 70-80%.
+
+    regex_pre_extraction:
+      detail: |
+        For gesund.bund.de results, the provider data follows a rigid DOM structure.
+        Consider regex-based extraction as the PRIMARY method, using the LLM only as a
+        fallback for fields that regex misses (e.g., clinic names with irregular formatting).
+      pattern_examples:
+        name: '/### ((?:Dr\.|Prof\.) .+)/'
+        address: '/(\S+(?:straße|str\.|weg|platz|gasse)\s+\d+[a-z]?)\s*\n\s*(\d{5})\s+(\S+)/'
+        phone: '/Telefon:\s*\[?([\d\s\/\-]+)/'
+      benefit: "Zero LLM cost for ~80% of fields; LLM handles only ambiguous cases."
+
+  error_handling_and_retry:
+    null_reduction_strategy: |
+      If the LLM returns all-null for a provider chunk, retry once with a simplified prompt:
+        "Extract name and address from: {text}"
+      Only escalate to the full schema prompt if the simplified prompt also fails.
+
+    validation_pass: |
+      After extraction, run a validation pass:
+        - postal_code must match /^\d{5}$/
+        - city should be in the known Bavarian cities list
+        - email must match basic email regex or be null
+      Flag records failing validation for manual review rather than discarding them.
+
+  cost_monitoring:
+    approach: |
+      Log token usage per extraction call (input_tokens + output_tokens).
+      Track cumulative usage to detect prompt bloat or model regression early.
+      With Ollama local inference, cost is compute-time rather than API dollars,
+      but monitoring helps identify slow extractions that may indicate malformed input.

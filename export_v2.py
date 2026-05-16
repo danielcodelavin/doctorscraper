@@ -43,6 +43,29 @@ def deduplicate(df):
     return pd.concat([has_email, no_email], ignore_index=True)
 
 
+def is_bavarian_plz(plz):
+    """Check if a German postal code belongs to Bavaria."""
+    if not plz or not isinstance(plz, str):
+        return False
+    plz = plz.strip()[:5]
+    if not plz.isdigit() or len(plz) != 5:
+        return False
+    n = int(plz)
+    # Bavarian PLZ ranges:
+    # 63700-63939: Unterfranken (Aschaffenburg, Miltenberg)
+    # 80000-87999: Oberbayern, Schwaben
+    # 88100-88179: Lindau area
+    # 89200-89449: Memmingen, Kaufbeuren area
+    # 90000-97999: Franken, Oberpfalz, Niederbayern
+    return (
+        (63700 <= n <= 63939)
+        or (80000 <= n <= 87999)
+        or (88100 <= n <= 88179)
+        or (89200 <= n <= 89449)
+        or (90000 <= n <= 97999)
+    )
+
+
 def run():
     combined = PROCESSED_DIR / "all_extractions.json"
     with open(combined, "r", encoding="utf-8") as f:
@@ -84,6 +107,11 @@ def run():
     before = len(df)
     df = deduplicate(df)
     print(f"Deduplicated: {before} -> {len(df)} records")
+
+    # Filter to Bavaria only (by postal code)
+    before_filter = len(df)
+    df = df[df["postal_code"].apply(is_bavarian_plz)].copy()
+    print(f"Bavaria filter: {before_filter} -> {len(df)} records ({before_filter - len(df)} non-Bavarian removed)")
 
     df = df.sort_values(["city", "last_name"], na_position="last").reset_index(drop=True)
 
